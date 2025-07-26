@@ -1,0 +1,249 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Upload, Record, and Live ASR with Silence Detection</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 40px;
+        }
+        .container {
+            display: flex;
+            justify-content: space-between;
+        }
+        .section {
+            width: 30%;
+        }
+        .output {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            background-color: #f9f9f9;
+            white-space: pre-wrap;
+        }
+        .loader {
+            display: none;
+            margin-top: 10px;
+        }
+        .icon {
+            margin-right: 10px;
+        }
+    </style>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Upload Section -->
+        <div class="section">
+            <h2><i class="fas fa-file-audio icon"></i>Upload Audio File</h2>
+            <form id="uploadForm">
+                <input type="file" id="audioFile" accept="audio/*" required><br><br>
+                <button type="submit">Submit Upload</button>
+            </form>
+            <div class="loader" id="uploadLoader">Uploading...</div>
+            <div class="output" id="uploadOutput"></div>
+        </div>
+
+        <!-- Record Section -->
+        <div class="section">
+            <h2><i class="fas fa-microphone icon"></i>Record Audio</h2>
+            <button id="recordBtn">Start Recording</button>
+            <button id="stopBtn" disabled>Stop Recording</button><br><br>
+            <audio id="audioPlayback" controls style="display:none;"></audio><br><br>
+            <button id="submitRecordingBtn" disabled>Submit Recording</button>
+            <div class="loader" id="recordLoader">Uploading...</div>
+            <div class="output" id="recordOutput"></div>
+        </div>
+
+        <!-- Live ASR Section -->
+        <div class="section">
+            <h2><i class="fas fa-wave-square icon"></i>Live ASR</h2>
+            <button id="startLiveASRBtn">Start Live ASR</button>
+            <button id="stopLiveASRBtn" disabled>Stop Live ASR</button>
+            <div class="output" id="liveASROutput">Live transcription will appear here...</div>
+        </div>
+    </div>
+
+    <script>
+        // Upload Form
+        document.getElementById('uploadForm').addEventListener('submit', async function (event) {
+            event.preventDefault();
+            const fileInput = document.getElementById('audioFile');
+            const outputDiv = document.getElementById('uploadOutput');
+            const loader = document.getElementById('uploadLoader');
+
+            if (fileInput.files.length === 0) {
+                outputDiv.textContent = 'Please select an audio file to upload.';
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+
+            loader.style.display = 'block';
+            outputDiv.innerHTML = '';
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/infer-uploaded-audio/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                loader.style.display = 'none';
+
+                if (result.transcription) {
+                    outputDiv.innerHTML = `<p><strong>Transcription:</strong> ${result.transcription}</p>`;
+                } else if (result.error) {
+                    outputDiv.innerHTML = `<p style="color:red;"><strong>Error:</strong> ${result.error}</p>`;
+                } else {
+                    outputDiv.innerHTML = `<p><strong>Server Response:</strong> ${JSON.stringify(result)}</p>`;
+                }
+
+            } catch (error) {
+                loader.style.display = 'none';
+                outputDiv.innerHTML = `<p style="color:red;">Error: ${error.message}</p>`;
+            }
+        });
+
+        // Recording
+        let mediaRecorder;
+        let audioChunks = [];
+
+        const recordBtn = document.getElementById('recordBtn');
+        const stopBtn = document.getElementById('stopBtn');
+        const submitRecordingBtn = document.getElementById('submitRecordingBtn');
+        const audioPlayback = document.getElementById('audioPlayback');
+        const recordOutput = document.getElementById('recordOutput');
+        const recordLoader = document.getElementById('recordLoader');
+
+        recordBtn.onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+                audioPlayback.src = audioUrl;
+                audioPlayback.style.display = 'block';
+                submitRecordingBtn.disabled = false;
+                submitRecordingBtn.audioBlob = audioBlob;
+            };
+
+            mediaRecorder.start();
+            recordBtn.disabled = true;
+            stopBtn.disabled = false;
+        };
+
+        stopBtn.onclick = () => {
+            mediaRecorder.stop();
+            recordBtn.disabled = false;
+            stopBtn.disabled = true;
+        };
+
+        submitRecordingBtn.onclick = async () => {
+            const formData = new FormData();
+            formData.append('file', submitRecordingBtn.audioBlob, 'recorded_audio.webm');
+
+            recordLoader.style.display = 'block';
+            recordOutput.innerHTML = '';
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/infer-uploaded-audio/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                recordLoader.style.display = 'none';
+
+                if (result.transcription) {
+                    recordOutput.innerHTML = `<p><strong>Transcription:</strong> ${result.transcription}</p>`;
+                } else if (result.error) {
+                    recordOutput.innerHTML = `<p style="color:red;"><strong>Error:</strong> ${result.error}</p>`;
+                } else {
+                    recordOutput.innerHTML = `<p><strong>Server Response:</strong> ${JSON.stringify(result)}</p>`;
+                }
+
+            } catch (error) {
+                recordLoader.style.display = 'none';
+                recordOutput.innerHTML = `<p style="color:red;">Error: ${error.message}</p>`;
+            }
+        };
+
+        // Live ASR with Silence Detection
+        const startLiveASRBtn = document.getElementById('startLiveASRBtn');
+        const stopLiveASRBtn = document.getElementById('stopLiveASRBtn');
+        const liveASROutput = document.getElementById('liveASROutput');
+
+        let ws, audioContext, processor, source;
+
+        startLiveASRBtn.onclick = async () => {
+            ws = new WebSocket("ws://127.0.0.1:8000/ws/asr");
+
+            ws.onmessage = (event) => {
+                try {
+                    const result = JSON.parse(event.data);
+                    if (result.transcription) {
+                        liveASROutput.textContent += result.transcription + "\n";
+                    } else {
+                        liveASROutput.textContent += event.data + "\n";
+                    }
+                } catch (e) {
+                    liveASROutput.textContent += event.data + "\n";
+                }
+            };
+
+            ws.onopen = async () => {
+                startLiveASRBtn.disabled = true;
+                stopLiveASRBtn.disabled = false;
+
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                source = audioContext.createMediaStreamSource(stream);
+
+                processor = audioContext.createScriptProcessor(4096, 1, 1);
+                processor.onaudioprocess = (e) => {
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    let rms = 0;
+                    for (let i = 0; i < inputData.length; i++) {
+                        rms += inputData[i] * inputData[i];
+                    }
+                    rms = Math.sqrt(rms / inputData.length);
+
+                    const silenceThreshold = 0.01;
+                    if (rms > silenceThreshold) {
+                        const int16Data = new Int16Array(inputData.length);
+                        for (let i = 0; i < inputData.length; i++) {
+                            int16Data[i] = inputData[i] * 32767;
+                        }
+                        if (ws.readyState === WebSocket.OPEN) {
+                            ws.send(int16Data.buffer);
+                        }
+                    }
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+            };
+        };
+
+        stopLiveASRBtn.onclick = () => {
+            if (ws) ws.close();
+            if (processor) processor.disconnect();
+            if (source) source.disconnect();
+            if (audioContext) audioContext.close();
+
+            startLiveASRBtn.disabled = false;
+            stopLiveASRBtn.disabled = true;
+        };
+    </script>
+</body>
+</html>
